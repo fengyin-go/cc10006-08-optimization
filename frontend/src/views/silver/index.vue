@@ -2,8 +2,10 @@
   <section class="page" data-module="silver">
     <header class="page-head">
       <div>
-        <h2>清洗层管理管理</h2>
-        <p class="page-desc">维护清洗层表的输入、执行约束与结果记录，为清洗层管理提供可验证的数据工程流程。</p>
+        <h2>清洗层管理</h2>
+        <p class="page-desc">
+          维护清洗表的批次完成度与时间字段；批次模拟的变化会立即驱动聚合效果视图的可执行结论。
+        </p>
       </div>
       <div class="page-actions">
         <button class="btn primary" type="button" @click="openCreate">登记清洗表</button>
@@ -19,9 +21,16 @@
     </div>
 
     <form class="filter-bar" @submit.prevent="reload">
-      <label v-for="field in filterFields" :key="field" class="filter-item">
-        <span>{{ field }}</span>
-        <input v-model="filters[field]" :placeholder="`按${field}检索`" />
+      <label class="filter-item">
+        <span>表编号</span>
+        <input v-model="filters.keyword" placeholder="按表编号检索" />
+      </label>
+      <label class="filter-item">
+        <span>状态</span>
+        <select v-model="filters.status">
+          <option value="">全部状态</option>
+          <option v-for="state in statuses" :key="state" :value="state">{{ state }}</option>
+        </select>
       </label>
       <button class="btn" type="submit">查询</button>
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
@@ -31,12 +40,24 @@
       <thead>
         <tr>
           <th v-for="column in columns" :key="column">{{ column }}</th>
-          <th>可执行动作</th>
+          <th>生命周期动作</th>
+          <th>批次模拟（联动聚合效果视图）</th>
         </tr>
       </thead>
       <tbody>
         <tr v-for="row in rows" :key="String(row.id)">
-          <td v-for="column in columns" :key="column">{{ row[column] ?? '—' }}</td>
+          <td v-for="column in columns" :key="column">
+            <template v-if="column === '完成度'">
+              <div class="completion-cell">
+                <div class="bar"><div class="bar-fill" :style="{ width: `${row.完成度 ?? 0}%` }"></div></div>
+                <span>{{ row.完成度 ?? '—' }}%</span>
+              </div>
+            </template>
+            <template v-else-if="column === '批次状态'">
+              <span class="badge" :class="batchClass(String(row.批次状态))">{{ row.批次状态 ?? '—' }}</span>
+            </template>
+            <template v-else>{{ row[column] ?? '—' }}</template>
+          </td>
           <td class="row-actions">
             <button
               v-for="action in actions"
@@ -48,9 +69,20 @@
               {{ action }}
             </button>
           </td>
+          <td class="row-actions">
+            <button
+              v-for="action in simulateActions"
+              :key="action"
+              class="link"
+              type="button"
+              @click="runAction(action, row)"
+            >
+              {{ action }}
+            </button>
+          </td>
         </tr>
         <tr v-if="!rows.length">
-          <td :colspan="columns.length + 1" class="empty-state">暂无清洗层管理数据，可先登记清洗表</td>
+          <td :colspan="columns.length + 2" class="empty-state">暂无清洗层管理数据，可先登记清洗表</td>
         </tr>
       </tbody>
     </table>
@@ -64,22 +96,34 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
+const route = useRoute()
 const ENDPOINT = '/api/silver'
-const columns = ["表编号", "上游原始表", "清洗脚本", "格式校验", "异常过滤", "去重字段", "输出路径", "调度周期"]
-const actions = ["提交校验", "启用清洗", "停用清洗"]
-const statuses = ["草稿", "待校验", "已启用", "已停用"]
-const stats = [{"label": "清洗表总数", "value": 0}, {"label": "已启用表", "value": 0}, {"label": "待校验表", "value": 0}]
+const columns = [
+  '表编号', '上游原始表', '所属分层', '更新频率', '完成度', '批次状态',
+  '计划完成时间', '最近完成时间', '输出路径', '调度周期',
+]
+const actions = ['提交校验', '启用清洗', '停用清洗']
+const simulateActions = ['模拟批次延迟', '模拟批次完成', '模拟时间异常']
+const statuses = ['草稿', '待校验', '已启用', '已停用']
+const stats = [{ label: '清洗表总数', value: 0 }, { label: '已启用表', value: 0 }, { label: '异常批次', value: 0 }]
 
 const rows = ref<Row[]>([])
 const total = ref(0)
 const errorMessage = ref('')
 const filters = ref<Record<string, string>>({})
-const filterFields = columns.slice(0, 3)
+
+function batchClass(state: string): string {
+  if (state === '正常') return 'badge-ready'
+  if (state === '延迟') return 'badge-blocked'
+  if (state === '时间异常') return 'badge-danger'
+  return 'badge-unknown'
+}
 
 function resetFilters() {
   filters.value = {}
@@ -87,7 +131,8 @@ function resetFilters() {
 }
 
 function exportRows() {
-  window.open(`${ENDPOINT}/export`, '_blank')
+  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
+  window.open(`${ENDPOINT}/export?${query}`, '_blank')
 }
 
 function openCreate() {
@@ -101,8 +146,9 @@ async function runAction(action: string, row: Row) {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
-    if (!response.ok) {
-      throw new Error('清洗层管理动作未生效，请稍后重试')
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || '清洗层管理动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {
@@ -112,7 +158,12 @@ async function runAction(action: string, row: Row) {
 
 async function reload() {
   errorMessage.value = ''
-  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
+  const params: Record<string, string> = { ...filters.value }
+  // 支持从聚合效果视图带表编号跳转定位。
+  if (route.query.keyword && !params.keyword) {
+    params.keyword = String(route.query.keyword)
+  }
+  const query = new URLSearchParams(params).toString()
   try {
     const response = await request(`${ENDPOINT}?${query}`)
     if (!response.ok) {
@@ -121,6 +172,9 @@ async function reload() {
     const payload = await response.json()
     rows.value = payload.items ?? []
     total.value = payload.total ?? rows.value.length
+    stats[0].value = total.value
+    stats[1].value = rows.value.filter((row) => row.status === '已启用').length
+    stats[2].value = rows.value.filter((row) => row.abnormal).length
   } catch (error) {
     errorMessage.value = error instanceof Error ? error.message : '清洗层管理列表读取失败'
   }

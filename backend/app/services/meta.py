@@ -18,6 +18,7 @@ class MetaService:
         *,
         keyword: str | None = None,
         status: str | None = None,
+        object_name: str | None = None,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -26,6 +27,8 @@ class MetaService:
             rows = [row for row in rows if keyword in str(row.get("条目编号", ""))]
         if status:
             rows = [row for row in rows if row.get("status") == status]
+        if object_name:
+            rows = [row for row in rows if str(row.get("对象名称", "")) == object_name]
         total = len(rows)
         start = max(page - 1, 0) * size
         return rows[start:start + size], total

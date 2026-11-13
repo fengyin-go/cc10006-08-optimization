@@ -5,7 +5,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
+from app.schemas import ActionResult, EntryPayload, PageResult, action_of
 from app.services.meta import MetaService
 
 router = APIRouter(prefix="/api/meta", tags=["元数据中心"])
@@ -20,13 +20,16 @@ STATUSES = ["草稿", "待审核", "已生效", "已作废"]
 def list_entries(
     keyword: str | None = Query(default=None, description="按条目编号检索"),
     status: str | None = Query(default=None, description="草稿、待审核、已生效、已作废"),
+    object_name: str | None = Query(default=None, description="按对象名称（如清洗表编号）过滤，供聚合效果视图定位"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按条目编号与状态过滤元数据中心列表；没有数据时返回空页，不报错。"""
+    """按条目编号、状态与对象名称过滤元数据中心列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(
+        keyword=keyword, status=status, object_name=object_name, page=page, size=size
+    )
     return PageResult(items=items, total=total, page=page, size=size)
 
 
@@ -51,7 +54,7 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     """对单条元数据条目执行提交审核、生效发布、作废条目；不允许的动作会被拦下并说明原因。"""
-    action = str(payload.values.get("action") or "").strip()
+    action = action_of(payload)
     entry, message = service.run_action(entry_id, action)
     if entry is None:
         return ActionResult(ok=False, message=message)
@@ -59,7 +62,13 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
 
 
 @router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出元数据中心清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
+def export_entries(
+    keyword: str | None = None,
+    status: str | None = None,
+    object_name: str | None = None,
+) -> dict[str, Any]:
+    """导出元数据中心清单：与列表同口径，返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(
+        keyword=keyword, status=status, object_name=object_name, page=1, size=10000
+    )
     return {"module": "meta", "total": total, "items": items}

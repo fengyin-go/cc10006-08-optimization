@@ -1,12 +1,18 @@
-"""聚合层管理接口：维护聚合视图，覆盖提交校验、启用聚合、停用聚合等动作。"""
+"""聚合层管理接口：维护聚合视图，并提供按上游清洗表汇总的效果视图。
+
+效果视图相关接口（/effects、/effects/filters、/effects/export）共用
+GoldService.effect_views 同一个计算入口，保证页面列表与导出回执同源；
+上游清洗表的完成度变化实时驱动可查询范围，不存在两套相反结论。
+"""
 from __future__ import annotations
 
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
-from app.services.gold import GoldService
+from app.effects import EffectTimeError, parse_as_of
+from app.schemas import ActionResult, EntryPayload, PageResult, action_of
+from app.services.gold import EFFECT_STATES, GoldService
 
 router = APIRouter(prefix="/api/gold", tags=["聚合层管理"])
 
@@ -16,18 +22,98 @@ LIST_FIELDS = ["视图编号", "上游清洗表", "聚合维度", "度量字段"
 STATUSES = ["草稿", "待校验", "已启用", "已停用"]
 
 
+def _resolve_as_of(raw: str | None):
+    try:
+        return parse_as_of(raw)
+    except EffectTimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @router.get("", response_model=PageResult[dict])
 def list_entries(
     keyword: str | None = Query(default=None, description="按视图编号检索"),
     status: str | None = Query(default=None, description="草稿、待校验、已启用、已停用"),
+    layer: str | None = Query(default=None, description="按所属分层过滤"),
     page: int = 1,
     size: int = 20,
 ) -> PageResult[dict]:
-    """按视图编号与状态过滤聚合层管理列表；没有数据时返回空页，不报错。"""
+    """按视图编号、状态与所属分层过滤聚合层管理列表；没有数据时返回空页，不报错。"""
     if size > 200:
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
-    items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
+    items, total = service.list_entries(keyword=keyword, status=status, layer=layer, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/effects/filters")
+def effect_filters() -> dict[str, Any]:
+    """效果视图的筛选项：所属分层、更新频率、可执行状态随数据动态返回。"""
+    return service.filter_options()
+
+
+@router.get("/effects", response_model=PageResult[dict])
+def effect_views(
+    keyword: str | None = Query(default=None, description="按视图编号检索"),
+    layer: str | None = Query(default=None, description="所属分层：DWD/DWS/ADS"),
+    frequency: str | None = Query(default=None, description="更新频率：每小时/每日/每周"),
+    state: str | None = Query(default=None, description="可执行状态：可执行/不可执行/无法判定"),
+    status: str | None = Query(default=None, description="视图自身状态：草稿/待校验/已启用/已停用"),
+    as_of: str | None = Query(default=None, description="效果判定基准时刻，默认当前时刻；非法值返回 400"),
+    page: int = 1,
+    size: int = 20,
+) -> PageResult[dict]:
+    """按上游清洗表汇总的聚合效果视图：完成度、更新频率、新鲜度与可执行状态。"""
+    if size > 200:
+        raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
+    if state and state not in EFFECT_STATES:
+        raise HTTPException(status_code=400, detail=f"可执行状态「{state}」不在允许范围：{'、'.join(EFFECT_STATES)}")
+    moment = _resolve_as_of(as_of)
+    items, total = service.effect_views(
+        keyword=keyword,
+        layer=layer,
+        frequency=frequency,
+        state=state,
+        status=status,
+        as_of=moment,
+        page=page,
+        size=size,
+    )
+    return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/effects/summary")
+def effect_summary(
+    keyword: str | None = None,
+    layer: str | None = None,
+    frequency: str | None = None,
+    state: str | None = None,
+    status: str | None = None,
+    as_of: str | None = None,
+) -> dict[str, int]:
+    """效果视图统计卡片：与列表同一套筛选口径，随上游状态实时变化。"""
+    if state and state not in EFFECT_STATES:
+        raise HTTPException(status_code=400, detail=f"可执行状态「{state}」不在允许范围：{'、'.join(EFFECT_STATES)}")
+    moment = _resolve_as_of(as_of)
+    return service.effect_summary(
+        keyword=keyword, layer=layer, frequency=frequency, state=state, status=status, as_of=moment
+    )
+
+
+@router.get("/effects/export")
+def effect_export(
+    keyword: str | None = None,
+    layer: str | None = None,
+    frequency: str | None = None,
+    state: str | None = None,
+    status: str | None = None,
+    as_of: str | None = None,
+) -> dict[str, Any]:
+    """导出效果视图回执：与页面列表同源，回显筛选条件与基准时刻。"""
+    if state and state not in EFFECT_STATES:
+        raise HTTPException(status_code=400, detail=f"可执行状态「{state}」不在允许范围：{'、'.join(EFFECT_STATES)}")
+    moment = _resolve_as_of(as_of)
+    return service.effect_export(
+        keyword=keyword, layer=layer, frequency=frequency, state=state, status=status, as_of=moment
+    )
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -51,7 +137,7 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     """对单条聚合视图执行提交校验、启用聚合、停用聚合；不允许的动作会被拦下并说明原因。"""
-    action = str(payload.values.get("action") or "").strip()
+    action = action_of(payload)
     entry, message = service.run_action(entry_id, action)
     if entry is None:
         return ActionResult(ok=False, message=message)
@@ -59,7 +145,18 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
 
 
 @router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出聚合层管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "gold", "total": total, "items": items}
+def export_entries(
+    keyword: str | None = None,
+    status: str | None = None,
+    layer: str | None = None,
+) -> dict[str, Any]:
+    """导出聚合层登记清单：与列表接口同口径，回显当前过滤条件。"""
+    items, total = service.list_entries(keyword=keyword, status=status, layer=layer, page=1, size=10000)
+    return {
+        "module": "gold",
+        "筛选条件": {key: value for key, value in {
+            "keyword": keyword, "status": status, "layer": layer
+        }.items() if value},
+        "total": total,
+        "items": items,
+    }

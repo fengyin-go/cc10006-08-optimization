@@ -23,6 +23,10 @@
         <span>{{ field }}</span>
         <input v-model="filters[field]" :placeholder="`按${field}检索`" />
       </label>
+      <label class="filter-item">
+        <span>对象名称</span>
+        <input v-model="filters.object_name" placeholder="按对象名称（清洗表编号）定位" />
+      </label>
       <button class="btn" type="submit">查询</button>
       <button class="btn ghost" type="button" @click="resetFilters">重置条件</button>
     </form>
@@ -64,11 +68,13 @@
 
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
 
 import { request } from '@/api/client'
 
 type Row = Record<string, string | number | null>
 
+const route = useRoute()
 const ENDPOINT = '/api/meta'
 const columns = ["条目编号", "对象类型", "对象名称", "属性键", "属性值", "数据来源", "更新频率", "版本变更"]
 const actions = ["提交审核", "生效发布", "作废条目"]
@@ -87,7 +93,8 @@ function resetFilters() {
 }
 
 function exportRows() {
-  window.open(`${ENDPOINT}/export`, '_blank')
+  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
+  window.open(`${ENDPOINT}/export?${query}`, '_blank')
 }
 
 function openCreate() {
@@ -101,8 +108,9 @@ async function runAction(action: string, row: Row) {
       method: 'POST',
       body: JSON.stringify({ action }),
     })
-    if (!response.ok) {
-      throw new Error('元数据中心动作未生效，请稍后重试')
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok || payload.ok === false) {
+      throw new Error(payload.message || '元数据中心动作未生效，请稍后重试')
     }
     await reload()
   } catch (error) {
@@ -112,7 +120,13 @@ async function runAction(action: string, row: Row) {
 
 async function reload() {
   errorMessage.value = ''
-  const query = new URLSearchParams(filters.value as Record<string, string>).toString()
+  // 从聚合效果视图跳转时带上 object_name，直接定位到该清洗表的元数据版本。
+  const params: Record<string, string> = { ...filters.value }
+  const objectName = route.query.object_name
+  if (objectName && !params.object_name) {
+    params.object_name = String(objectName)
+  }
+  const query = new URLSearchParams(params).toString()
   try {
     const response = await request(`${ENDPOINT}?${query}`)
     if (!response.ok) {

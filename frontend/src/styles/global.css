@@ -33,3 +33,26 @@ body { margin: 0; background: #f6f8fb; color: #1f2937; }
 .link { border: none; background: none; color: var(--brand); cursor: pointer; padding: 0; }
 .page-foot { display: flex; justify-content: space-between; margin-top: 8px; font-size: 12px; color: var(--muted); }
 .error-text { color: #b42318; }
+
+/* 聚合效果视图：状态徽标、完成度进度条与上游子表 */
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; white-space: nowrap; }
+.badge-ready { background: #e7f6ec; color: #117a37; border: 1px solid #a6e0c0; }
+.badge-blocked { background: #fff3e0; color: #b25e09; border: 1px solid #ffd9a8; }
+.badge-danger { background: #fdeaea; color: #b42318; border: 1px solid #f3bcbc; }
+.badge-unknown { background: #eef2f7; color: #475569; border: 1px solid #cbd5e1; }
+.layer-badge { background: #eef4ff; color: #1f4fb0; border: 1px solid #c3d6fb; border-radius: 6px; padding: 1px 7px; font-size: 12px; }
+.completion-cell { display: flex; align-items: center; gap: 8px; min-width: 130px; }
+.bar { flex: 1; height: 8px; background: #edf1f6; border-radius: 5px; overflow: hidden; min-width: 70px; }
+.bar-fill { height: 100%; background: linear-gradient(90deg, #1f6feb, #3b82f6); border-radius: 5px; }
+.effect-table .row-blocked { background: #fffaf3; }
+.upstream-table { margin: 4px 0; }
+.upstream-table th, .upstream-table td { font-size: 12px; padding: 6px 8px; }
+.sub-text { color: var(--muted); font-size: 12px; }
+.reason-cell { max-width: 260px; color: #b25e09; font-size: 12px; }
+.poll-hint { color: var(--muted); font-size: 12px; align-self: center; }
+.tone-ready { color: #117a37; }
+.tone-blocked { color: #b25e09; }
+.tone-unknown { color: #475569; }
+select { border: 1px solid var(--border); border-radius: 6px; padding: 5px 8px; font-size: 13px; background: #fff; }
+.link:disabled { color: #aab4c2; cursor: not-allowed; }
+.filter-item select { display: block; min-width: 120px; }

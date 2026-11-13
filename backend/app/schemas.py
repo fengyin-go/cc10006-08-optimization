@@ -22,10 +22,21 @@ class ActionResult(BaseModel):
 
 
 class EntryPayload(BaseModel):
-    """登记或修改一条业务记录时提交的字段集合。"""
+    """登记或修改一条业务记录时提交的字段集合。
+
+    历史上前端动作按钮直接提交扁平结构（{"action": "..."}），而登记入口提交
+    {"values": {...}}。这里两种结构都接收，并通过 action_of 统一取动作名。
+    """
 
     values: dict[str, Any] = Field(default_factory=dict)
     remark: str | None = None
+    action: str | None = None
+
+
+def action_of(payload: EntryPayload) -> str:
+    """兼容 values 包裹与扁平两种提交方式，统一取出动作名。"""
+    nested = str(payload.values.get("action") or "").strip()
+    return nested or str(payload.action or "").strip()
 
 
 

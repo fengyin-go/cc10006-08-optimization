@@ -5,8 +5,8 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query
 
-from app.schemas import ActionResult, EntryPayload, PageResult
-from app.services.silver import SilverService
+from app.schemas import ActionResult, EntryPayload, PageResult, action_of
+from app.services.silver import SIMULATE_ACTIONS, SilverService
 
 router = APIRouter(prefix="/api/silver", tags=["清洗层管理"])
 
@@ -50,8 +50,13 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
-    """对单条清洗表执行提交校验、启用清洗、停用清洗；不允许的动作会被拦下并说明原因。"""
-    action = str(payload.values.get("action") or "").strip()
+    """对单条清洗表执行生命周期动作或批次模拟。
+
+    生命周期：提交校验、启用清洗、停用清洗；
+    批次模拟：模拟批次延迟、模拟批次完成、模拟时间异常（改动会立即驱动聚合效果视图）。
+    不允许的动作会被拦下并说明原因。
+    """
+    action = action_of(payload)
     entry, message = service.run_action(entry_id, action)
     if entry is None:
         return ActionResult(ok=False, message=message)

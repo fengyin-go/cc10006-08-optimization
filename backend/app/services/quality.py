@@ -18,6 +18,7 @@ class QualityService:
         *,
         keyword: str | None = None,
         status: str | None = None,
+        monitor_object: str | None = None,
         page: int = 1,
         size: int = 20,
     ) -> tuple[list[dict[str, Any]], int]:
@@ -26,6 +27,8 @@ class QualityService:
             rows = [row for row in rows if keyword in str(row.get("指标编号", ""))]
         if status:
             rows = [row for row in rows if row.get("status") == status]
+        if monitor_object:
+            rows = [row for row in rows if str(row.get("监控对象", "")) == monitor_object]
         total = len(rows)
         start = max(page - 1, 0) * size
         return rows[start:start + size], total
